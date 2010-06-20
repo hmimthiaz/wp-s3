@@ -1,13 +1,13 @@
 <?php
-
 /*
 Plugin Name: Wordpress Amazon S3 Plugin
 Plugin URI: http://imthi.com/wp-s3/
-Description: This plugin helps the users to view your blog in a pda and iPhone browser.
+Description: WP-S3 copies media files used in your blog post to Amazon S3 cloud. Uses only filters to replace the media urls in the post if media is available in the S3 cloud. Wordpress cron funtionality is used for batching media upload to  S3. This plugin is very safe and will not modify anything in your database.
 Author: Imthiaz Rafiq
 Version: 1.0
 Author URI: http://imthi.com/
 */
+
 class S3Plugin {
 	
 	var $enabled;
@@ -39,7 +39,7 @@ class S3Plugin {
 			$this->enabled = FALSE;
 		}
 		
-		$this->s3CacheFolder = ABSPATH . 'wp-content' . DIRECTORY_SEPARATOR . 's3temp' . DIRECTORY_SEPARATOR;
+		$this->s3CacheFolder = ABSPATH . get_option ( 'upload_path', 'wp-content/uploads' ) . DIRECTORY_SEPARATOR . 's3temp' . DIRECTORY_SEPARATOR;
 		$this->mediaUrl = get_option ( 'siteurl' ) . '/' . get_option ( 'upload_path', 'wp-content/uploads' ) . '/';
 		$this->mediaPath = ABSPATH . get_option ( 'upload_path', 'wp-content/uploads' ) . DIRECTORY_SEPARATOR;
 		
@@ -105,12 +105,16 @@ class S3Plugin {
 				delete_option ( 's3plugin_use_ssl' );
 				$useSSL = FALSE;
 			}
+			update_option ( 's3plugin_enabled', 'inactive' );
 			if ($this->checkS3AccessAndBucket ( $_POST [ 's3plugin_amazon_key_id' ], $_POST [ 's3plugin_amazon_secret_key' ], $useSSL, $_POST [ 's3plugin_amazon_bucket_name' ] ) === FALSE) {
 				$s3PuginMessage = 'Connection failed. Plugin not active.';
-				update_option ( 's3plugin_enabled', 'inactive' );
 			} else {
-				$s3PuginMessage = 'Settings saved. Plugin is active.';
-				update_option ( 's3plugin_enabled', 'active' );
+				if (is_writable ( $this->s3CacheFolder )) {
+					update_option ( 's3plugin_enabled', 'active' );
+					$s3PuginMessage = 'Settings saved. Plugin is active.';
+				} else {
+					$s3PuginMessage = 'Settings saved. Directory: ' . get_option ( 'upload_path', 'wp-content/uploads' ) . DIRECTORY_SEPARATOR . 's3temp' . ' not writable';
+				}
 			}
 			update_option ( 's3plugin_cron_interval', $_POST [ 's3plugin_cron_interval' ] );
 			update_option ( 's3plugin_cron_limit', $_POST [ 's3plugin_cron_limit' ] );
