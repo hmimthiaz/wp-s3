@@ -5,21 +5,16 @@
   Plugin URI: http://imthi.com/wp-s3/
   Description: This plugin helps the users to view your blog in a pda and iPhone browser.
   Author: Imthiaz Rafiq
-  Version: 1.0
+  Version: 1.1 Alpha
   Author URI: http://imthi.com/
  */
-
-error_reporting(E_ALL);
-ini_set('display_errors', true);
 
 class S3Plugin {
 
     var $enabled;
     var $s3CacheFolder;
     var $siteURL;
-    
     var $isCloudFrontURLEnabled;
-    
     var $s3AccessKey;
     var $s3SecretKey;
     var $s3BucketName;
@@ -76,14 +71,14 @@ class S3Plugin {
 
 	$this->s3UseCloudFrontURL = (bool) get_option('s3plugin_use_cloudfrontURL', 0);
 	$this->s3CloudFrontURL = untrailingslashit(get_option('s3plugin_cloudfrontURL'));
-	
-	if($this->s3UseCloudFrontURL && !empty ($this->s3UseCloudFrontURL)){
+
+	if ($this->s3UseCloudFrontURL && !empty($this->s3UseCloudFrontURL)) {
 	    $this->isCloudFrontURLEnabled = TRUE;
-	}else{
+	} else {
 	    $this->isCloudFrontURLEnabled = FALSE;
 	}
-	
-	
+
+
 	$this->cronScheduleTime = get_option('s3plugin_cron_interval', 300);
 	$this->cronUploadLimit = get_option('s3plugin_cron_limit', 20);
 
@@ -97,6 +92,8 @@ class S3Plugin {
 	    &$this,
 	    'deactivatePlugin'));
 	add_action('admin_menu', array(&$this, 's3AdminMenu'));
+	add_filter('script_loader_src', array(&$this, 'script_loader_src'));
+
 	if (isset($_GET ['page']) && $_GET ['page'] == 's3plugin-options') {
 	    ob_start();
 	}
@@ -119,6 +116,21 @@ class S3Plugin {
 
     private function __clone() {
 	
+    }
+
+    function script_loader_src($scriptURL) {
+	if (!is_admin()) {
+	    $urlParts = parse_url($scriptURL);
+	    $justURL = $urlParts['scheme'] . '://' . $urlParts['host'] . $urlParts['path'];
+	    $fileCDNURL = self::getCDNURL($justURL);
+	    if ($fileCDNURL !== FALSE) {
+		if (isset($urlParts['query']) && !empty($urlParts['query'])) {
+		    return $fileCDNURL . '?' . $urlParts['query'];
+		}
+		return $fileCDNURL;
+	    }
+	}
+	return $scriptURL;
     }
 
     function s3AdminMenu() {
@@ -148,7 +160,7 @@ class S3Plugin {
 		delete_option('s3plugin_use_cloudfrontURL');
 	    }
 	    update_option('s3plugin_cloudfrontURL', $_POST ['s3plugin_cloudfrontURL']);
-	    
+
 	    if ($this->checkS3AccessAndBucket($_POST ['s3plugin_amazon_key_id'], $_POST ['s3plugin_amazon_secret_key'], $useSSL, $_POST ['s3plugin_amazon_bucket_name']) === FALSE) {
 		$s3PuginMessage = 'Connection failed. Plugin not active.';
 		update_option('s3plugin_enabled', 'inactive');
@@ -263,9 +275,9 @@ class S3Plugin {
 	    if (file_exists($cacheFilePath) === TRUE) {
 		$fileContents = file_get_contents($cacheFilePath);
 		if ($fileContents == 'done') {
-		    if($instance->isCloudFrontURLEnabled){
-			return $instance->s3CloudFrontURL .'/'.$relativePath;
-		    }else{
+		    if ($instance->isCloudFrontURLEnabled) {
+			return $instance->s3CloudFrontURL . '/' . $relativePath;
+		    } else {
 			return "http://{$instance->s3BucketName}.s3.amazonaws.com/" . $relativePath;
 		    }
 		}
@@ -353,6 +365,12 @@ class S3Plugin {
 }
 
 $wp_s3 = S3Plugin::getInstance();
+
+function jsDebug($var='') {
+    print "<script type='text/javascript'>\n";
+    print "console.log('{$var}');\n";
+    print "</script>\n";
+}
 
 function cmVarDebug($var, $echo = true) {
     $dump = "<div style=\"border:1px solid #f00;font-family:arial;font-size:12px;font-weight:normal;background:#f0f0f0;text-align:left;padding:3px;\"><pre>" . print_r($var, true) . "</pre></div>";
