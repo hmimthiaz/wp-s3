@@ -9,6 +9,8 @@
   Author URI: http://imthi.com/
  */
 
+error_reporting(E_ALL);
+
 class S3Plugin {
 
     var $enabled;
@@ -21,6 +23,7 @@ class S3Plugin {
     var $s3UseSSL;
     var $s3UseCloudFrontURL;
     var $s3CloudFrontURL;
+    var $s3DirPrefix;
     var $cronScheduleTime;
     var $cronUploadLimit;
     /*
@@ -58,7 +61,7 @@ class S3Plugin {
 	    $this->enabled = FALSE;
 	}
 
-	$this->blockDirectory = array('wpcf7_captcha');
+	$this->blockDirectory = array('wpcf7_captcha', 'wp-admin');
 	$this->blockExtension = array('php', 'htm', 'html');
 
 	$this->s3CacheFolder = ABSPATH . 'wp-content' . DIRECTORY_SEPARATOR . 's3temp' . DIRECTORY_SEPARATOR;
@@ -68,6 +71,7 @@ class S3Plugin {
 	$this->s3SecretKey = get_option('s3plugin_amazon_secret_key');
 	$this->s3BucketName = get_option('s3plugin_amazon_bucket_name');
 	$this->s3UseSSL = (bool) get_option('s3plugin_use_ssl', 0);
+	$this->s3DirPrefix = get_option('s3plugin_dir_prefix');
 
 	$this->s3UseCloudFrontURL = (bool) get_option('s3plugin_use_cloudfrontURL', 0);
 	$this->s3CloudFrontURL = untrailingslashit(get_option('s3plugin_cloudfrontURL'));
@@ -94,7 +98,6 @@ class S3Plugin {
 	add_action('admin_menu', array(&$this, 's3AdminMenu'));
 	add_filter('script_loader_src', array(&$this, 'script_loader_src'), 99);
 	add_filter('style_loader_src', array(&$this, 'style_loader_src'), 99);
-
 
 	if (isset($_GET ['page']) && $_GET ['page'] == 's3plugin-options') {
 	    ob_start();
@@ -146,6 +149,12 @@ class S3Plugin {
 	    } else {
 		delete_option('s3plugin_use_cloudfrontURL');
 	    }
+	    if (isset($_POST ['s3plugin_clear_cache'])) {
+		$this->recursive_remove_directory($this->s3CacheFolder, FALSE);
+		$this->db->query("DELETE FROM `{$this->tabeImageQueue}` WHERE 1=1;");
+		update_option('s3plugin_dir_prefix', substr(md5(time() + microtime()), 0, 6) . '/');
+	    }
+
 	    update_option('s3plugin_cloudfrontURL', $_POST ['s3plugin_cloudfrontURL']);
 
 	    if ($this->checkS3AccessAndBucket($_POST ['s3plugin_amazon_key_id'], $_POST ['s3plugin_amazon_secret_key'], $useSSL, $_POST ['s3plugin_amazon_bucket_name']) === FALSE) {
@@ -200,11 +209,15 @@ class S3Plugin {
     function executeCron() {
 	ignore_user_abort(true);
 	set_time_limit(0);
+	
+	print "Hello";
 
 	include_once dirname(__FILE__) . DIRECTORY_SEPARATOR . 's3-php5-curl' . DIRECTORY_SEPARATOR . 'S3.php';
 
 	$s3Adapter = new S3($this->s3AccessKey, $this->s3SecretKey, $this->s3UseSSL);
 	$availableBuckets = @$s3Adapter->listBuckets();
+	cmVarDebug($availableBuckets);
+	
 	if (!empty($availableBuckets) && in_array($this->s3BucketName, $availableBuckets) == TRUE) {
 	    $query = "SELECT * FROM {$this->tabeImageQueue} WHERE status='queue' ORDER BY added LIMIT {$this->cronUploadLimit};";
 	    $filesToUpload = $this->db->get_results($query, ARRAY_A);
@@ -213,10 +226,10 @@ class S3Plugin {
 		    $shouldUpload = TRUE;
 		    $fileStatus = 'error';
 		    $filePath = ABSPATH . $fileInfo ['path'];
-		    $fileObjectInfo = $s3Adapter->getObjectInfo($this->s3BucketName, $fileInfo ['path'], TRUE);
+		    $fileObjectInfo = $s3Adapter->getObjectInfo($this->s3BucketName, $this->s3DirPrefix . $fileInfo ['path'], TRUE);
 		    if (!empty($fileObjectInfo)) {
 			if ($fileObjectInfo ['size'] != filesize($filePath)) {
-			    if ($s3Adapter->deleteObject($this->s3BucketName, $fileInfo ['path']) === FALSE) {
+			    if ($s3Adapter->deleteObject($this->s3BucketName, $this->s3DirPrefix . $fileInfo ['path']) === FALSE) {
 				$shouldUpload = FALSE;
 			    }
 			} else {
@@ -226,7 +239,7 @@ class S3Plugin {
 		    }
 		    if ($shouldUpload) {
 			$fileMimeType = $this->getFileType($filePath);
-			if ($s3Adapter->putObjectFile($filePath, $this->s3BucketName, $fileInfo ['path'], S3::ACL_PUBLIC_READ, array(), $fileMimeType) === TRUE) {
+			if ($s3Adapter->putObjectFile($filePath, $this->s3BucketName, $this->s3DirPrefix . $fileInfo ['path'], S3::ACL_PUBLIC_READ, array(), $fileMimeType) === TRUE) {
 			    $fileStatus = 'done';
 			}
 		    }
@@ -379,9 +392,9 @@ class S3Plugin {
 		$fileContents = file_get_contents($cacheFilePath);
 		if ($fileContents == 'done') {
 		    if ($instance->isCloudFrontURLEnabled) {
-			return $instance->s3CloudFrontURL . '/' . $relativePath;
+			return $instance->s3CloudFrontURL . '/' . $instance->s3DirPrefix . $relativePath;
 		    } else {
-			return "http://{$instance->s3BucketName}.s3.amazonaws.com/" . $relativePath;
+			return "http://{$instance->s3BucketName}.s3.amazonaws.com/" . $instance->s3DirPrefix . $relativePath;
 		    }
 		}
 	    } else {
@@ -407,22 +420,27 @@ class S3Plugin {
 	return FALSE;
     }
 
+    public static function scanForImages($htmlContent) {
+	$instance = self::getInstance();
+	$mediaList = $instance->getMediaFromContent($htmlContent);
+	if (!empty($mediaList)) {
+	    foreach ($mediaList as $fileURL) {
+		$fileCDNURL = self::getCDNURL($fileURL);
+		if ($fileCDNURL !== FALSE) {
+		    $htmlContent = str_replace($fileURL, $fileCDNURL, $htmlContent);
+		}
+	    }
+	}
+	return $htmlContent;
+    }
+
     function theContent($the_content) {
 	$id = 0;
 	$post = &get_post($id);
 	if ($post->post_status != 'publish') {
 	    return $the_content;
 	}
-	$mediaList = $this->getMediaFromContent($the_content);
-	if (!empty($mediaList)) {
-	    foreach ($mediaList as $fileURL) {
-		$fileCDNURL = self::getCDNURL($fileURL);
-		if ($fileCDNURL !== FALSE) {
-		    $the_content = str_replace($fileURL, $fileCDNURL, $the_content);
-		}
-	    }
-	}
-	return $the_content;
+	return self::scanForImages($the_content);
     }
 
     function getMediaFromContent($content) {
@@ -463,6 +481,34 @@ class S3Plugin {
 		chmod($path . '/index.php', 0644);
 	    }
 	}
+    }
+
+    function recursive_remove_directory($directory, $empty=FALSE) {
+	if (substr($directory, -1) == '/') {
+	    $directory = substr($directory, 0, -1);
+	}
+	if (!file_exists($directory) || !is_dir($directory)) {
+	    return FALSE;
+	} elseif (is_readable($directory)) {
+	    $handle = opendir($directory);
+	    while (FALSE !== ($item = readdir($handle))) {
+		if ($item != '.' && $item != '..') {
+		    $path = $directory . '/' . $item;
+		    if (is_dir($path)) {
+			$this->recursive_remove_directory($path);
+		    } else {
+			unlink($path);
+		    }
+		}
+	    }
+	    closedir($handle);
+	    if ($empty == FALSE) {
+		if (!rmdir($directory)) {
+		    return FALSE;
+		}
+	    }
+	}
+	return TRUE;
     }
 
 }

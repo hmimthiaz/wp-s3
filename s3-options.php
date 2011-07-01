@@ -104,7 +104,27 @@
 		    </select>
 		    <span class="description"><?php _e('No of files to upload on each cron execution.') ?></span>
 		</td>
-	    </tr>	
+	    </tr>
+	    <tr valign="top">
+		<th scope="row"><label for="s3plugin_cloudfrontURL"><?php _e('Path prefix') ?></label></th>
+		<td>
+		    <input name="s3plugin_path_prefix" type="text" id="s3plugin_path_prefix" value="<?php form_option('s3plugin_dir_prefix'); ?>" readonly="readonly" size="7" />
+		    <span class="description"><?php _e('Path prefix. This will be auto generated when you clear cache.') ?></span>
+		</td>
+	    </tr>	    
+	    <tr valign="top">
+		<th scope="row"><?php _e('Clear Cache') ?></th>
+		<td>
+		    <fieldset>
+			<legend class="screen-reader-text"><span><?php _e('Use SSL') ?></span></legend>
+			<label for="s3plugin_clear_cache">
+			    <input name="s3plugin_clear_cache" type="checkbox" id="s3plugin_clear_cache" value="1" <?php checked('1', get_option('s3plugin_clear_cache')); ?> />
+			    <?php _e('Clear Cache. This will change the upload prefix.') ?>
+			</label>
+		    </fieldset>
+		</td>
+	    </tr>	    
+	    
 	</table>
 	<p class="submit">
 	    <input type="submit" name="Submit" class="button-primary" value="<?php esc_attr_e('Save Changes') ?>" />
