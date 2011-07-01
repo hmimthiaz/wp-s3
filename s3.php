@@ -92,7 +92,9 @@ class S3Plugin {
 	    &$this,
 	    'deactivatePlugin'));
 	add_action('admin_menu', array(&$this, 's3AdminMenu'));
-	add_filter('script_loader_src', array(&$this, 'script_loader_src'));
+	add_filter('script_loader_src', array(&$this, 'script_loader_src'), 99);
+	add_filter('style_loader_src', array(&$this, 'style_loader_src'), 99);
+
 
 	if (isset($_GET ['page']) && $_GET ['page'] == 's3plugin-options') {
 	    ob_start();
@@ -116,21 +118,6 @@ class S3Plugin {
 
     private function __clone() {
 	
-    }
-
-    function script_loader_src($scriptURL) {
-	if (!is_admin()) {
-	    $urlParts = parse_url($scriptURL);
-	    $justURL = $urlParts['scheme'] . '://' . $urlParts['host'] . $urlParts['path'];
-	    $fileCDNURL = self::getCDNURL($justURL);
-	    if ($fileCDNURL !== FALSE) {
-		if (isset($urlParts['query']) && !empty($urlParts['query'])) {
-		    return $fileCDNURL . '?' . $urlParts['query'];
-		}
-		return $fileCDNURL;
-	    }
-	}
-	return $scriptURL;
     }
 
     function s3AdminMenu() {
@@ -252,11 +239,90 @@ class S3Plugin {
 	}
     }
 
+    function script_loader_src($scriptURL) {
+	if (!is_admin()) {
+	    $urlParts = parse_url($scriptURL);
+	    $justURL = $urlParts['scheme'] . '://' . $urlParts['host'] . $urlParts['path'];
+	    $fileCDNURL = self::getCDNURL($justURL);
+	    if ($fileCDNURL !== FALSE) {
+		if (isset($urlParts['query']) && !empty($urlParts['query'])) {
+		    return $fileCDNURL . '?' . $urlParts['query'];
+		}
+		return $fileCDNURL;
+	    }
+	}
+	return $scriptURL;
+    }
+
+    function style_loader_src($cssURL) {
+	if (!is_admin()) {
+	    $urlParts = parse_url($cssURL);
+	    $justURL = $urlParts['scheme'] . '://' . $urlParts['host'] . $urlParts['path'];
+	    $fileCDNURL = self::getCDNURL($justURL);
+	    if ($fileCDNURL !== FALSE) {
+		if (isset($urlParts['query']) && !empty($urlParts['query'])) {
+		    return $fileCDNURL . '?' . $urlParts['query'];
+		}
+		return $fileCDNURL;
+	    }else{
+		$realPath = $this->getRealPath($justURL);
+		if (file_exists($realPath)) {
+		    $cssFolder = dirname($realPath);
+		    $cssRelatedFiles = $this->scanDirectoryRecursively($cssFolder);
+		    if(!empty ($cssRelatedFiles)){
+			foreach ($cssRelatedFiles as $relatedFile){
+			    $queueFiles = self::getCDNURL($this->siteURL.'/'.$relatedFile);
+			}
+		    }
+		}
+	    }
+	}
+	return $cssURL;
+    }
+
+    function scanDirectoryRecursively($directory, $filter=FALSE, $directoryFiles = array()) {
+
+	if (substr($directory, -1) == DIRECTORY_SEPARATOR) {
+	    $directory = substr($directory, 0, -1);
+	}
+	
+	$extensionToInclude = array('css','png','gif','jpg','jpeg');
+	
+	if (!file_exists($directory) || !is_dir($directory)) {
+	    return FALSE;
+	} elseif (is_readable($directory)) {
+	    $directory_list = opendir($directory);
+	    while ($file = readdir($directory_list)) {
+		if ($file != '.' && $file != '..') {
+		    $path = $directory . DIRECTORY_SEPARATOR . $file;
+		    if (is_readable($path)) {
+			if (is_dir($path)) {
+			    $directoryFiles = $this->scanDirectoryRecursively($path, $filter, $directoryFiles);
+			} elseif (is_file($path)) {
+			    $extension = strtolower(end(explode('.',$path)));
+			    if(in_array($extension, $extensionToInclude)){
+				$directoryFiles[] = str_replace(ABSPATH, '', $path) ;
+			    }
+			}
+		    }
+		}
+	    }
+	    closedir($directory_list);
+	    return $directoryFiles;
+	} else {
+	    return FALSE;
+	}
+    }
+
+    function getRealPath($fileURL) {
+	$relativePath = ltrim(str_replace($this->siteURL, '', $fileURL), '/');
+	return ABSPATH . $relativePath;
+    }
+
     public static function getCDNURL($fileURL) {
 	$instance = self::getInstance();
 	$relativePath = ltrim(str_replace($instance->siteURL, '', $fileURL), '/');
-
-	$realPath = ABSPATH . $relativePath;
+	$realPath = $instance->getRealPath($fileURL);
 	if (file_exists($realPath)) {
 	    foreach ($instance->blockDirectory as $blokedDirectory) {
 		if (stripos($relativePath, $blokedDirectory) !== FALSE) {
@@ -270,7 +336,6 @@ class S3Plugin {
 		    return FALSE;
 		}
 	    }
-
 	    $cacheFilePath = $instance->getFilePath($relativePath);
 	    if (file_exists($cacheFilePath) === TRUE) {
 		$fileContents = file_get_contents($cacheFilePath);
