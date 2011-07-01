@@ -59,7 +59,7 @@ class S3Plugin {
 	}
 
 	$this->blockDirectory = array('wpcf7_captcha');
-	$this->blockExtension = array('php');
+	$this->blockExtension = array('php', 'htm', 'html');
 
 	$this->s3CacheFolder = ABSPATH . 'wp-content' . DIRECTORY_SEPARATOR . 's3temp' . DIRECTORY_SEPARATOR;
 	$this->siteURL = untrailingslashit(get_option('siteurl'));
@@ -225,7 +225,8 @@ class S3Plugin {
 			}
 		    }
 		    if ($shouldUpload) {
-			if ($s3Adapter->putObjectFile($filePath, $this->s3BucketName, $fileInfo ['path'], S3::ACL_PUBLIC_READ) === TRUE) {
+			$fileMimeType = $this->getFileType($filePath);
+			if ($s3Adapter->putObjectFile($filePath, $this->s3BucketName, $fileInfo ['path'], S3::ACL_PUBLIC_READ, array(), $fileMimeType) === TRUE) {
 			    $fileStatus = 'done';
 			}
 		    }
@@ -237,6 +238,43 @@ class S3Plugin {
 		}
 	    }
 	}
+    }
+
+    function getFileType($file) {
+	$ext = strtolower(pathInfo($file, PATHINFO_EXTENSION));
+	static $exts = array(
+	'jpg' => 'image/jpeg',
+	'gif' => 'image/gif',
+	'png' => 'image/png',
+	'tif' => 'image/tiff',
+	'tiff' => 'image/tiff',
+	'ico' => 'image/x-icon',
+	'swf' => 'application/x-shockwave-flash',
+	'pdf' => 'application/pdf',
+	'zip' => 'application/zip',
+	'gz' => 'application/x-gzip',
+	'tar' => 'application/x-tar',
+	'bz' => 'application/x-bzip',
+	'bz2' => 'application/x-bzip2',
+	'txt' => 'text/plain',
+	'asc' => 'text/plain',
+	'htm' => 'text/html',
+	'html' => 'text/html',
+	'css' => 'text/css',
+	'js' => 'text/javascript',
+	'xml' => 'text/xml',
+	'xsl' => 'application/xsl+xml',
+	'ogg' => 'application/ogg',
+	'mp3' => 'audio/mpeg',
+	'wav' => 'audio/x-wav',
+	'avi' => 'video/x-msvideo',
+	'mpg' => 'video/mpeg',
+	'mpeg' => 'video/mpeg',
+	'mov' => 'video/quicktime',
+	'flv' => 'video/x-flv',
+	'php' => 'text/x-php'
+	);
+	return isset($exts[$ext]) ? $exts[$ext] : 'application/octet-stream';
     }
 
     function script_loader_src($scriptURL) {
@@ -264,14 +302,14 @@ class S3Plugin {
 		    return $fileCDNURL . '?' . $urlParts['query'];
 		}
 		return $fileCDNURL;
-	    }else{
+	    } else {
 		$realPath = $this->getRealPath($justURL);
 		if (file_exists($realPath)) {
 		    $cssFolder = dirname($realPath);
 		    $cssRelatedFiles = $this->scanDirectoryRecursively($cssFolder);
-		    if(!empty ($cssRelatedFiles)){
-			foreach ($cssRelatedFiles as $relatedFile){
-			    $queueFiles = self::getCDNURL($this->siteURL.'/'.$relatedFile);
+		    if (!empty($cssRelatedFiles)) {
+			foreach ($cssRelatedFiles as $relatedFile) {
+			    $queueFiles = self::getCDNURL($this->siteURL . '/' . $relatedFile);
 			}
 		    }
 		}
@@ -285,9 +323,9 @@ class S3Plugin {
 	if (substr($directory, -1) == DIRECTORY_SEPARATOR) {
 	    $directory = substr($directory, 0, -1);
 	}
-	
-	$extensionToInclude = array('css','png','gif','jpg','jpeg');
-	
+
+	$extensionToInclude = array('css', 'png', 'gif', 'jpg', 'jpeg');
+
 	if (!file_exists($directory) || !is_dir($directory)) {
 	    return FALSE;
 	} elseif (is_readable($directory)) {
@@ -299,9 +337,9 @@ class S3Plugin {
 			if (is_dir($path)) {
 			    $directoryFiles = $this->scanDirectoryRecursively($path, $filter, $directoryFiles);
 			} elseif (is_file($path)) {
-			    $extension = strtolower(end(explode('.',$path)));
-			    if(in_array($extension, $extensionToInclude)){
-				$directoryFiles[] = str_replace(ABSPATH, '', $path) ;
+			    $extension = strtolower(end(explode('.', $path)));
+			    if (in_array($extension, $extensionToInclude)) {
+				$directoryFiles[] = str_replace(ABSPATH, '', $path);
 			    }
 			}
 		    }
