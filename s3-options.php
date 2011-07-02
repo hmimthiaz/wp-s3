@@ -106,6 +106,18 @@
 		</td>
 	    </tr>
 	    <tr valign="top">
+		<th scope="row"><?php _e('Compress JS & CSS') ?></th>
+		<td>
+		    <fieldset>
+			<legend class="screen-reader-text"><span><?php _e('Use SSL') ?></span></legend>
+			<label for="s3plugin_compress_files">
+			    <input name="s3plugin_compress_files" type="checkbox" id="s3plugin_compress_files" value="1" <?php checked('1', get_option('s3plugin_compress_files')); ?> />
+			    <?php _e('Enable this to compress and push js and css files to s3') ?>
+			</label>
+		    </fieldset>
+		</td>
+	    </tr>	    
+	    <tr valign="top">
 		<th scope="row"><label for="s3plugin_cloudfrontURL"><?php _e('Path prefix') ?></label></th>
 		<td>
 		    <input name="s3plugin_path_prefix" type="text" id="s3plugin_path_prefix" value="<?php form_option('s3plugin_dir_prefix'); ?>" readonly="readonly" size="7" />

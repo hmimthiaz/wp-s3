@@ -23,6 +23,7 @@ class S3Plugin {
     var $s3UseSSL;
     var $s3UseCloudFrontURL;
     var $s3CloudFrontURL;
+    var $s3CompressFiles;
     var $s3DirPrefix;
     var $cronScheduleTime;
     var $cronUploadLimit;
@@ -71,6 +72,7 @@ class S3Plugin {
 	$this->s3SecretKey = get_option('s3plugin_amazon_secret_key');
 	$this->s3BucketName = get_option('s3plugin_amazon_bucket_name');
 	$this->s3UseSSL = (bool) get_option('s3plugin_use_ssl', 0);
+	$this->s3CompressFiles = (bool) get_option('s3plugin_compress_files', 0);
 	$this->s3DirPrefix = get_option('s3plugin_dir_prefix');
 
 	$this->s3UseCloudFrontURL = (bool) get_option('s3plugin_use_cloudfrontURL', 0);
@@ -81,7 +83,6 @@ class S3Plugin {
 	} else {
 	    $this->isCloudFrontURLEnabled = FALSE;
 	}
-
 
 	$this->cronScheduleTime = get_option('s3plugin_cron_interval', 300);
 	$this->cronUploadLimit = get_option('s3plugin_cron_limit', 20);
@@ -96,6 +97,7 @@ class S3Plugin {
 	    &$this,
 	    'deactivatePlugin'));
 	add_action('admin_menu', array(&$this, 's3AdminMenu'));
+
 	add_filter('script_loader_src', array(&$this, 'script_loader_src'), 99);
 	add_filter('style_loader_src', array(&$this, 'style_loader_src'), 99);
 
@@ -139,16 +141,25 @@ class S3Plugin {
 	    update_option('s3plugin_amazon_key_id', $_POST ['s3plugin_amazon_key_id']);
 	    update_option('s3plugin_amazon_secret_key', $_POST ['s3plugin_amazon_secret_key']);
 	    update_option('s3plugin_amazon_bucket_name', $_POST ['s3plugin_amazon_bucket_name']);
+
 	    if (isset($_POST ['s3plugin_use_ssl'])) {
 		update_option('s3plugin_use_ssl', $_POST ['s3plugin_use_ssl']);
 	    } else {
 		delete_option('s3plugin_use_ssl');
 	    }
+
+	    if (isset($_POST ['s3plugin_compress_files'])) {
+		update_option('s3plugin_compress_files', $_POST ['s3plugin_compress_files']);
+	    } else {
+		delete_option('s3plugin_compress_files');
+	    }
+
 	    if (isset($_POST ['s3plugin_use_cloudfrontURL'])) {
 		update_option('s3plugin_use_cloudfrontURL', $_POST ['s3plugin_use_cloudfrontURL']);
 	    } else {
 		delete_option('s3plugin_use_cloudfrontURL');
 	    }
+
 	    if (isset($_POST ['s3plugin_clear_cache'])) {
 		$this->recursive_remove_directory($this->s3CacheFolder, FALSE);
 		$this->db->query("DELETE FROM `{$this->tabeImageQueue}` WHERE 1=1;");
@@ -209,7 +220,12 @@ class S3Plugin {
     function executeCron() {
 	ignore_user_abort(true);
 	set_time_limit(0);
-	
+
+	ini_set('display_errors', 1);
+	ini_set('log_errors', 1);
+	ini_set('error_log', dirname(__FILE__) . '/error_log.txt');
+	error_reporting(E_ALL);
+
 	print "Hello";
 
 	include_once dirname(__FILE__) . DIRECTORY_SEPARATOR . 's3-php5-curl' . DIRECTORY_SEPARATOR . 'S3.php';
@@ -217,12 +233,13 @@ class S3Plugin {
 	$s3Adapter = new S3($this->s3AccessKey, $this->s3SecretKey, $this->s3UseSSL);
 	$availableBuckets = @$s3Adapter->listBuckets();
 	cmVarDebug($availableBuckets);
-	
+
 	if (!empty($availableBuckets) && in_array($this->s3BucketName, $availableBuckets) == TRUE) {
 	    $query = "SELECT * FROM {$this->tabeImageQueue} WHERE status='queue' ORDER BY added LIMIT {$this->cronUploadLimit};";
 	    $filesToUpload = $this->db->get_results($query, ARRAY_A);
 	    if (!empty($filesToUpload)) {
 		foreach ($filesToUpload as $fileInfo) {
+		    cmVarDebug($fileInfo);
 		    $shouldUpload = TRUE;
 		    $fileStatus = 'error';
 		    $filePath = ABSPATH . $fileInfo ['path'];
@@ -238,9 +255,26 @@ class S3Plugin {
 			}
 		    }
 		    if ($shouldUpload) {
-			$fileMimeType = $this->getFileType($filePath);
-			if ($s3Adapter->putObjectFile($filePath, $this->s3BucketName, $this->s3DirPrefix . $fileInfo ['path'], S3::ACL_PUBLIC_READ, array(), $fileMimeType) === TRUE) {
+			$fileContentType = $this->getFileType($filePath);
+			$fileRequestHeaders = array(
+			    'Content-Type' => $fileContentType
+			);
+			$tempFile = '';
+			if ($this->s3CompressFiles && ( $fileContentType == 'text/css' || $fileContentType == 'text/javascript')) {
+			    $fileRequestHeaders['Content-Encoding'] = 'gzip';
+			    $tempFile = tempnam($this->s3CacheFolder, 'tmp_gzip');
+			    $gzipFilePointer = fopen($tempFile, "wb+");
+			    fwrite($gzipFilePointer, gzencode(file_get_contents($filePath), 9));
+			    fclose($gzipFilePointer);
+			    $fileResource = $s3Adapter->inputResource(fopen($tempFile, 'rb'), filesize($tempFile));
+			} else {
+			    $fileResource = $s3Adapter->inputResource(fopen($filePath, 'rb'), filesize($filePath));
+			}
+			if ($s3Adapter->putObject($fileResource, $this->s3BucketName, $this->s3DirPrefix . $fileInfo ['path'], S3::ACL_PUBLIC_READ, array(), $fileRequestHeaders) === TRUE) {
 			    $fileStatus = 'done';
+			}
+			if (!empty($tempFile)) {
+			    @unlink($tempFile);
 			}
 		    }
 		    print "Processing: {$fileInfo['path']} Status: {$fileStatus}. <br />\n";
@@ -373,7 +407,10 @@ class S3Plugin {
     public static function getCDNURL($fileURL) {
 	$instance = self::getInstance();
 	$relativePath = ltrim(str_replace($instance->siteURL, '', $fileURL), '/');
-	$realPath = $instance->getRealPath($fileURL);
+	$realPath = trim($instance->getRealPath($fileURL));
+	if (empty($realPath)) {
+	    return FALSE;
+	}
 	if (file_exists($realPath)) {
 	    foreach ($instance->blockDirectory as $blokedDirectory) {
 		if (stripos($relativePath, $blokedDirectory) !== FALSE) {
